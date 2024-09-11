@@ -1,7 +1,10 @@
 # (c) 2024 ekspla.
 # MIT License.  https://github.com/ekspla/micropython_rx-8035
 #
-# A preliminary version of code for Seiko Epson's RX-8035SA/LC RTCs. 
+# A Micropython library to use with Seiko Epson's RX-8035SA/LC RTCs. 
+#
+# Limitation: while functions (methods) related to registers in Bank0 are mostly
+# supported, Bank1 registers such as timestamps and monthly/yearly alarm are not.  
 
 import time
 from micropython import const
@@ -16,11 +19,12 @@ _DATE_REG = const(0x04)
 _MONTH_REG = const(0x05)
 _YEAR_REG = const(0x06)
 _DIGITAL_OFFSET_REG = const(0x07)
-_WEEKLY_ALM_MIN_REG = const(0x08)
+_WEEKLY_ALM_MIN_REG = const(0x08) # Use these with /INTRB.
 _WEEKLY_ALM_HR_REG = const(0x09)
-_WEEKLY_ALM_WEKDAY_REG = const(0x0A)
-_MONTHLY_ALM_MIN_REG = const(0x0B)
+_WEEKLY_ALM_WEEKDAY_REG = const(0x0A)
+_MONTHLY_ALM_MIN_REG = const(0x0B) # Use these with /INTRA.
 _MONTHLY_ALM_HR_REG = const(0x0C)
+_USER_RAM_REG = const(0x0D)
 _CONTROL1_REG = const(0x0E)
 _CONTROL2_REG = const(0x0F)
 
@@ -33,23 +37,40 @@ _MONTH_MASK = const(0x1F)
 
 _24H_MASK = const(0x80)
 
-_MONTHLY_ALM_EN_MASK = const(0x80)
-_WEEKLY_ALM_EN_MASK = const(0x40)
-_DEBOUNCE_SET_L_MASK = const(0x20)
+# Control1 masks
+_WEEKLY_ALM_EN_MASK = const(0x80) # Use this with /INTRB.
+_MONTHLY_ALM_EN_MASK = const(0x40) # Use this with /INTRA.
+_DEBOUNCE_SET_LEN_MASK = const(0x20)
 _EVENT_DETECT_EN_MASK = const(0x10)
 _TEST_MASK = const(0x08)
-_CT2_MASK = const(0x04)
+_CT2_MASK = const(0x04) # Use these with /INTRB.
 _CT1_MASK = const(0x02)
 _CT0_MASK = const(0x01)
 
+# Control2 masks
 _BANK_TSFG_MASK = const(0x80)
 _VDET_MASK = const(0x40)
 _XSTP_MASK = const(0x20)
 _PON_MASK = const(0x10)
 _EVENT_DETECT_FUNC_G_MASK = const(0x08)
-_CONST_TIME_INT_FUNC_G_MASK = const(0x04)
-_MONTHLY_ALM_FUNC_G_MASK = const(0x02)
-_WEEKLY_ALM_FUNC_G_MASK = const(0x01)
+_CONST_TIME_INT_FUNC_G_MASK = const(0x04) # Use this with /INTRB.
+_WEEKLY_ALM_FUNC_G_MASK = const(0x02) # Use this with /INTRB.
+_MONTHLY_ALM_FUNC_G_MASK = const(0x01) # Use this with /INTRA.
+
+## Use this with /INTRB.
+CONST_TIME_INT_MONTH = _CT2_MASK | _CT1_MASK | _CT0_MASK # Can be cleared by Control2 with _CONST_TIME_INT_FUNC_G_MASK.
+CONST_TIME_INT_HOUR = _CT2_MASK | _CT1_MASK
+CONST_TIME_INT_MIN = _CT2_MASK | _CT0_MASK
+CONST_TIME_INT_SEC = _CT2_MASK
+CONST_TIME_INT_1HZ = _CT1_MASK | _CT0_MASK # Pulsed out with duty 50%.
+CONST_TIME_INT_2HZ = _CT1_MASK # Pulse out with duty 50%.
+SUN = const(0x01)
+MON = const(0x02)
+TUE = const(0x04)
+WED = const(0x08)
+THU = const(0x10)
+FRI = const(0x20)
+SAT = const(0x40)
 
 class RX8035:
     def __init__(self, i2c, address=_SLAVE_ADDRESS):
@@ -183,3 +204,75 @@ class RX8035:
             self.__write_byte(_DIGITAL_OFFSET_REG, self._buffer[_DIGITAL_OFFSET_REG])
         else:
             print('Value error.')
+
+    def const_time_int_pps(self, mode=None):
+        """Set/Reset 1 Hz or 2 Hz PPS signal on /INTRB. 
+
+           Specify either of mode=CONST_TIME_INT_1HZ or mode=CONST_TIME_INT_2HZ to set,
+           otherwise reset.
+        """
+        self._buffer[_CONTROL1_REG] = self.__read_byte(_CONTROL1_REG) & ~(_CT2_MASK|_CT1_MASK|_CT0_MASK)
+        if mode in (CONST_TIME_INT_1HZ, CONST_TIME_INT_2HZ):
+            self._buffer[_CONTROL1_REG] |= mode
+        self.__write_byte(_CONTROL1_REG, self._buffer[_CONTROL1_REG])
+
+    def daily_alarm(self, hours=None, minutes=None):
+        """Set/Reset daily alarm on /INTRA.
+        
+           Specify hours & minutes arguments to set, otherwise reset.
+        """
+        self.__read_bytes(_CONTROL1_REG, self._mv[_CONTROL1_REG:_CONTROL2_REG + 1])
+        if all((hours is None, minutes is None)):
+            self._buffer[_MONTHLY_ALM_HR_REG] = self._buffer[_MONTHLY_ALM_MIN_REG] = 0
+            self._buffer[_CONTROL1_REG] &= ~_MONTHLY_ALM_EN_MASK
+        else:
+            if minutes is None: minutes = 0 
+            if hours is None: hours = 0 
+            if minutes < 0 or minutes > 59:
+                raise ValueError('Minutes is out of range [0,59].')
+            self._buffer[_MONTHLY_ALM_MIN_REG] = self.__dec2bcd(minutes) & _minuteS_MASK
+            print(hex(self._buffer[_MONTHLY_ALM_MIN_REG]))
+            if hours < 0 or hours > 23:
+                raise ValueError('Hours is out of range [0,23].')
+            self._buffer[_MONTHLY_ALM_HR_REG] = self.__dec2bcd(hours) & _HOUR_MASK
+            print(hex(self._buffer[_MONTHLY_ALM_HR_REG]))
+            self._buffer[_CONTROL1_REG] |= _MONTHLY_ALM_EN_MASK
+            print(hex(self._buffer[_CONTROL1_REG]))
+
+        self._buffer[_CONTROL2_REG] &= ~_MONTHLY_ALM_FUNC_G_MASK
+        print(hex(self._buffer[_CONTROL2_REG]))
+        self.__write_bytes(_CONTROL1_REG, self._mv[_CONTROL1_REG:_CONTROL2_REG + 1])
+        self.__write_bytes(_MONTHLY_ALM_MIN_REG, self._mv[_MONTHLY_ALM_MIN_REG:_MONTHLY_ALM_HR_REG + 1])
+
+    def weekly_alarm(self, hours=None, minutes=None, weekdays=None):
+        """Set/Reset weekly alarm on /INTRB.
+        
+           Specify hours, minutes and weekdays arguments to set, otherwise reset.
+           Specify weekdays asfollows:
+               weekdays=MON|TUE|WED|THU|FRI
+        """
+        self.__read_bytes(_CONTROL1_REG, self._mv[_CONTROL1_REG:_CONTROL2_REG + 1])
+        if all((hours is None, minutes is None, weekdays is None)):
+            self._buffer[_WEEKLY_ALM_HR_REG] = self._buffer[_WEEKLY_ALM_MIN_REG] = 0
+            self._buffer[_CONTROL1_REG] &= ~_WEEKLY_ALM_EN_MASK
+        else:
+            if minutes is None: minutes = 0 
+            if hours is None: hours = 0 
+            if minutes < 0 or minutes > 59:
+                raise ValueError('Minutes is out of range [0,59].')
+            self._buffer[_WEEKLY_ALM_MIN_REG] = self.__dec2bcd(minutes) & _minuteS_MASK
+            print(hex(self._buffer[_WEEKLY_ALM_MIN_REG]))
+            if hours < 0 or hours > 23:
+                raise ValueError('Hours is out of range [0,23].')
+            self._buffer[_WEEKLY_ALM_HR_REG] = self.__dec2bcd(hours) & _HOUR_MASK
+            print(hex(self._buffer[_WEEKLY_ALM_HR_REG]))
+            if weekdays:
+                self._buffer[_WEEKLY_ALM_WEEKDAY_REG] = weekdays & 0x7F
+            print(hex(self._buffer[_WEEKLY_ALM_WEEKDAY_REG]))
+            self._buffer[_CONTROL1_REG] |= _WEEKLY_ALM_EN_MASK
+            print(hex(self._buffer[_CONTROL1_REG]))
+
+        self._buffer[_CONTROL2_REG] &= ~_WEEKLY_ALM_FUNC_G_MASK
+        print(hex(self._buffer[_CONTROL2_REG]))
+        self.__write_bytes(_CONTROL1_REG, self._mv[_CONTROL1_REG:_CONTROL2_REG + 1])
+        self.__write_bytes(_WEEKLY_ALM_MIN_REG, self._mv[_WEEKLY_ALM_MIN_REG:_WEEKLY_ALM_WEEKDAY_REG + 1])
