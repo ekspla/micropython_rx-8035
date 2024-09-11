@@ -25,7 +25,7 @@ _WEEKLY_ALM_WEEKDAY_REG = const(0x0A)
 _MONTHLY_ALM_MIN_REG = const(0x0B) # Use these with /INTRA.
 _MONTHLY_ALM_HR_REG = const(0x0C)
 _USER_RAM_REG = const(0x0D)
-_CONTROL1_REG = const(0x0E)
+_CONTROL1_REG = _CONTROL_REGS = const(0x0E)
 _CONTROL2_REG = const(0x0F)
 
 _minuteS_MASK = const(0x7F)
@@ -82,6 +82,7 @@ class RX8035:
         self._bytebuf = bytearray(1)
         self._mv = memoryview(self._buffer)
         self._mv_datetime = self._mv[_SEC_REG:_YEAR_REG + 1]
+        self._mv_controls = self._mv[_CONTROL1_REG:_CONTROL2_REG + 1]
 
         self._DATETIME_MASK = bytes((
             _minuteS_MASK, 
@@ -100,8 +101,8 @@ class RX8035:
             vdet := bool(value & _VDET_MASK), 
             )):
             print(f'RTC status error. PON: {pon}, XSTP: {xstp}, VDET: {vdet}')
-            self._mv[_CONTROL1_REG:_CONTROL2_REG + 1] = b'\x00\x00'
-            self.__write_bytes(_CONTROL1_REG, self._mv[_CONTROL1_REG:_CONTROL2_REG + 1])
+            self._mv_controls[:] = b'\x00\x00'
+            self.__write_bytes(_CONTROL_REGS, self._mv_controls)
 
     def __write_byte(self, reg, val):
         self._bytebuf[0] = val & 0xff
@@ -221,7 +222,7 @@ class RX8035:
         
            Specify hours & minutes arguments to set, otherwise reset.
         """
-        self.__read_bytes(_CONTROL1_REG, self._mv[_CONTROL1_REG:_CONTROL2_REG + 1])
+        self.__read_bytes(_CONTROL_REGS, self._mv_controls)
         if all((hours is None, minutes is None)):
             self._buffer[_MONTHLY_ALM_HR_REG] = self._buffer[_MONTHLY_ALM_MIN_REG] = 0
             self._buffer[_CONTROL1_REG] &= ~_MONTHLY_ALM_EN_MASK
@@ -231,18 +232,24 @@ class RX8035:
             if minutes < 0 or minutes > 59:
                 raise ValueError('Minutes is out of range [0,59].')
             self._buffer[_MONTHLY_ALM_MIN_REG] = self.__dec2bcd(minutes) & _minuteS_MASK
-            print(hex(self._buffer[_MONTHLY_ALM_MIN_REG]))
             if hours < 0 or hours > 23:
                 raise ValueError('Hours is out of range [0,23].')
             self._buffer[_MONTHLY_ALM_HR_REG] = self.__dec2bcd(hours) & _HOUR_MASK
-            print(hex(self._buffer[_MONTHLY_ALM_HR_REG]))
             self._buffer[_CONTROL1_REG] |= _MONTHLY_ALM_EN_MASK
-            print(hex(self._buffer[_CONTROL1_REG]))
 
         self._buffer[_CONTROL2_REG] &= ~_MONTHLY_ALM_FUNC_G_MASK
-        print(hex(self._buffer[_CONTROL2_REG]))
-        self.__write_bytes(_CONTROL1_REG, self._mv[_CONTROL1_REG:_CONTROL2_REG + 1])
+        self.__write_bytes(_CONTROL_REGS, self._mv_controls)
         self.__write_bytes(_MONTHLY_ALM_MIN_REG, self._mv[_MONTHLY_ALM_MIN_REG:_MONTHLY_ALM_HR_REG + 1])
+
+    def restart_daily_alarm(self):
+        """Restart daily alarm without changing the parameters.
+
+           If you want to stop daily alarm, use daily_alarm().
+        """
+        self.__read_bytes(_CONTROL_REGS, self._mv_controls)
+        self._buffer[_CONTROL1_REG] |= _MONTHLY_ALM_EN_MASK
+        self._buffer[_CONTROL2_REG] &= ~_MONTHLY_ALM_FUNC_G_MASK
+        self.__write_bytes(_CONTROL_REGS, self._mv_controls)
 
     def weekly_alarm(self, hours=None, minutes=None, weekdays=None):
         """Set/Reset weekly alarm on /INTRB.
@@ -251,28 +258,33 @@ class RX8035:
            Specify weekdays asfollows:
                weekdays=MON|TUE|WED|THU|FRI
         """
-        self.__read_bytes(_CONTROL1_REG, self._mv[_CONTROL1_REG:_CONTROL2_REG + 1])
+        self.__read_bytes(_CONTROL_REGS, self._mv_controls)
         if all((hours is None, minutes is None, weekdays is None)):
             self._buffer[_WEEKLY_ALM_HR_REG] = self._buffer[_WEEKLY_ALM_MIN_REG] = 0
             self._buffer[_CONTROL1_REG] &= ~_WEEKLY_ALM_EN_MASK
         else:
             if minutes is None: minutes = 0 
-            if hours is None: hours = 0 
-            if minutes < 0 or minutes > 59:
+            elif minutes < 0 or minutes > 59:
                 raise ValueError('Minutes is out of range [0,59].')
             self._buffer[_WEEKLY_ALM_MIN_REG] = self.__dec2bcd(minutes) & _minuteS_MASK
-            print(hex(self._buffer[_WEEKLY_ALM_MIN_REG]))
-            if hours < 0 or hours > 23:
+            if hours is None: hours = 0 
+            elif hours < 0 or hours > 23:
                 raise ValueError('Hours is out of range [0,23].')
             self._buffer[_WEEKLY_ALM_HR_REG] = self.__dec2bcd(hours) & _HOUR_MASK
-            print(hex(self._buffer[_WEEKLY_ALM_HR_REG]))
             if weekdays:
                 self._buffer[_WEEKLY_ALM_WEEKDAY_REG] = weekdays & 0x7F
-            print(hex(self._buffer[_WEEKLY_ALM_WEEKDAY_REG]))
             self._buffer[_CONTROL1_REG] |= _WEEKLY_ALM_EN_MASK
-            print(hex(self._buffer[_CONTROL1_REG]))
 
         self._buffer[_CONTROL2_REG] &= ~_WEEKLY_ALM_FUNC_G_MASK
-        print(hex(self._buffer[_CONTROL2_REG]))
-        self.__write_bytes(_CONTROL1_REG, self._mv[_CONTROL1_REG:_CONTROL2_REG + 1])
+        self.__write_bytes(_CONTROL_REGS, self._mv_controls)
         self.__write_bytes(_WEEKLY_ALM_MIN_REG, self._mv[_WEEKLY_ALM_MIN_REG:_WEEKLY_ALM_WEEKDAY_REG + 1])
+
+    def restart_weekly_alarm(self):
+        """Restart weekly alarm without changing the parameters.
+
+           If you want to stop daily alarm, use weekly_alarm().
+        """
+        self.__read_bytes(_CONTROL_REGS, self._mv_controls)
+        self._buffer[_CONTROL1_REG] |= _WEEKLY_ALM_EN_MASK
+        self._buffer[_CONTROL2_REG] &= ~_WEEKLY_ALM_FUNC_G_MASK
+        self.__write_bytes(_CONTROL_REGS, self._mv_controls)
