@@ -94,12 +94,14 @@ class RX8035:
             _YEAR_MASK))
 
         # Check RTC status.
+        self.init_error = False
         value = self.__read_byte(_CONTROL2_REG)
         if any((
             pon := bool(value & _PON_MASK), 
             xstp := bool(value & _XSTP_MASK), 
             vdet := bool(value & _VDET_MASK), 
             )):
+            self.init_error = True
             print(f'RTC status error. PON: {pon}, XSTP: {xstp}, VDET: {vdet}')
             self._mv_controls[:] = b'\x00\x00'
             self.__write_bytes(_CONTROL_REGS, self._mv_controls)
