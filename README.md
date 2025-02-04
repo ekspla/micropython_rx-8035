@@ -15,6 +15,6 @@ RTC status error. PON: True, XSTP: True, VDET: True    # RTC status is checked a
 >>> rtc.digital_offset(-2)                             # Digital offset may be adjusted.
 >>> rtc.write_now()                                    # Set rtc.
 >>> rtc.datetime()                                     # Read rtc.
-(24, 10, 8, 1, 7, 46, 21)
+(24, 10, 8, 1, 7, 46, 21)                              # (year, month, date, weekday, hours, minutes, seconds)
 >>>
 ```
