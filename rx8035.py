@@ -1,7 +1,7 @@
 # (c) 2024 ekspla.
 # MIT License.  https://github.com/ekspla/micropython_rx-8035
 #
-# A Micropython library to use with Seiko Epson's RX-8035SA/LC RTCs. 
+# A MicroPython library to use with Seiko Epson's RX-8035SA/LC RTCs. 
 #
 # Limitation: while functions (methods) related to registers in Bank0 are mostly
 # supported, Bank1 registers such as timestamps and monthly/yearly alarm are not.  
